@@ -2,7 +2,7 @@
 //! information about the file structure of the GameCube disc, i.e. the file
 //! names and their locations.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::ParseProblem;
 use crate::helper::{ensure, Parser, ProblemLocation, Seeker};
@@ -143,6 +143,94 @@ impl Fst {
             index: 0,
             last_index_of_directory: vec![],
             path: PathBuf::new(),
+        }
+    }
+
+    pub fn find(&self, path: &Path) -> Option<Entry> {
+        if path == PathBuf::from("") {
+            return Some(self.entries[0].clone());
+        };
+        let mut begin = 0;
+        let mut end = self.entries.len();
+        let mut cur_path = PathBuf::new();
+        for part in path {
+            cur_path.push(part);
+            let mut found = false;
+            let mut i = begin;
+            while i < end {
+                let entry = &self.entries[i];
+                match entry {
+                    Entry::Root => {
+                        if PathBuf::from("/") == part {
+                            if cur_path == path {
+                                return Some(entry.clone());
+                            }
+                            found = true;
+                            break;
+                        }
+                    },
+                    Entry::File { name, .. } => {
+                        if PathBuf::from(name) == part && cur_path == path {
+                            return Some(entry.clone());
+                        }
+                    },
+                    Entry::Directory {
+                        name,
+                        begin: new_begin,
+                        end: new_end,
+                        ..
+                    } => {
+                        if PathBuf::from(name) == part {
+                            if cur_path == path {
+                                return Some(entry.clone());
+                            }
+                            // This directory is part of the requested path,
+                            // so the next entries must be children of this directory
+                            begin = *new_begin as _;
+                            end = *new_end as _;
+                            found = true;
+                            break;
+                        }
+                        // This directory is not part of the requested path,
+                        // so skip over all entries of this directory
+                        i = *new_end as usize - 1;
+                    },
+                }
+                i += 1;
+            }
+            if !found {
+                return None;
+            }
+        }
+        return None;
+    }
+
+    pub fn get_children(&self, entry: &Entry) -> Vec<Entry> {
+        match entry {
+            Entry::Root => {
+                let mut i = 1;
+                let end = self.entries.len();
+                let mut results = Vec::new();
+                while i < end {
+                    let e = &self.entries[i];
+                    match e {
+                        Entry::Root => unreachable!(),
+                        Entry::File { .. } => {
+                            results.push(e.clone());
+                            i += 1;
+                        },
+                        Entry::Directory { end, .. } => {
+                            results.push(e.clone());
+                            i = *end as usize;
+                        },
+                    }
+                }
+                return results;
+            },
+            Entry::File { .. } => return Vec::new(),
+            Entry::Directory { begin, end, .. } => {
+                return self.entries[*begin as usize..*end as usize].to_vec();
+            },
         }
     }
 }
